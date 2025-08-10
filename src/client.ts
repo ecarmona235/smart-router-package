@@ -1,7 +1,7 @@
 export type RouterClientOptions = {
     AI_ANALYSIS_API?: string;
     fetchFn?: typeof fetch;
-  };
+ };
 
   interface  LLMEvaluations {   
     artificial_analysis_intelligence_index: number;
@@ -49,7 +49,7 @@ export type RouterClientOptions = {
   export class RouterClient {
     private readonly AI_ANALYSIS_API: string;
     private readonly fetchFn: typeof fetch;
-  
+    private llmData: CleanLLMData[] = [];
     constructor(options: RouterClientOptions = {}) {
         if (typeof window !== "undefined") {
             throw new Error("AI Router is server-only. Do not use in the browser.");
@@ -58,6 +58,10 @@ export type RouterClientOptions = {
         if (!key) throw new Error("Missing AI_ANALYSIS_API (or AI_ANALYSIS_API)");
         this.AI_ANALYSIS_API = key;
         this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
+    }
+    async initialize(): Promise<void> {
+        this.llmData = await this.#getLLMAnalytics();
+        console.log(this.llmData);
     }
 
     #extractLLMData(data: any): CleanLLMData[] {
