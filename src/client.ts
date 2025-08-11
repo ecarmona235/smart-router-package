@@ -5,17 +5,17 @@ export type RouterClientOptions = {
 
   interface  LLMEvaluations {   
     artificial_analysis_intelligence_index: number;
-    artificial_analysis_coding_index?: number;
-    artificial_analysis_math_index?: number;
-    mmlu_pro_index?: number;
-    physics_knowledge_index?: number;
-    human_level_evaluation_index?: number;
-    live_code_benchmark_index?: number;
-    science_code_benchmark_index?: number;
-    math_benchmark_index?: number;
-    aime_index?: number;
-    aime_25_index?: number;
-    image_benchmark_index?: number;
+    artificial_analysis_coding_index?: number | null;
+    artificial_analysis_math_index?: number | null;
+    mmlu_pro_index?: number | null;
+    physics_knowledge_index?: number | null;
+    human_level_evaluation_index?: number | null;
+    live_code_benchmark_index?: number | null;
+    science_code_benchmark_index?: number | null;
+    math_benchmark_index?: number | null;
+    aime_index?: number | null;
+    aime_25_index?: number | null;
+    image_benchmark_index?: number | null;
   }
   interface CleanLLMData {
     name: string;
@@ -31,11 +31,11 @@ export type RouterClientOptions = {
     elo: number;
     rank: number;
     ci95: string;
-    categories: {
-      style_category: string;
-      subject_matter_category: string;
-      elo: number;
-      ci95: string;
+    categories?: {
+      style_category?: string;
+      subject_matter_category?: string;
+      elo?: number;
+      ci95?: string;
     }[];
   }
 
@@ -50,6 +50,11 @@ export type RouterClientOptions = {
     private readonly AI_ANALYSIS_API: string;
     private readonly fetchFn: typeof fetch;
     private llmData: CleanLLMData[] = [];
+    private TTIAnalytics: CleanMediaData[] = [];
+    private ImageEditingAnalytics: CleanMediaData[] = [];
+    private TTSAnalytics: CleanMediaData[] = [];
+    private TTVAnalytics: CleanMediaData[] = [];
+    private ImageAnalytics: CleanMediaData[] = [];
     constructor(options: RouterClientOptions = {}) {
         if (typeof window !== "undefined") {
             throw new Error("AI Router is server-only. Do not use in the browser.");
@@ -61,7 +66,11 @@ export type RouterClientOptions = {
     }
     async initialize(): Promise<void> {
         this.llmData = await this.#getLLMAnalytics();
-        console.log(this.llmData);
+        this.TTIAnalytics = await this.#getTTIAnalytics();
+        this.ImageEditingAnalytics = await this.#getImageEditingAnalytics();
+        this.TTSAnalytics = await this.#getTTSAnalytics();
+        this.TTVAnalytics = await this.#getTTVAnalytics();
+        this.ImageAnalytics = await this.#getImageAnalytics();
     }
 
     #extractLLMData(data: any): CleanLLMData[] {
@@ -75,6 +84,24 @@ export type RouterClientOptions = {
         median_time_to_first_token: item.median_time_to_first_token,
       }));
     }
+    #extractMediaData(data: any): CleanMediaData[] {
+      return data.map((item: any) => ({
+        name: item.name,
+        model_creator_name: item.model_creator.name,
+        evaluations: {
+          elo: item.elo,
+          rank: item.rank,
+          ci95: item.ci95,
+          categories: item.categories?.map((category: any) => ({
+            style_category: category.style_category,
+            subject_matter_category: category.subject_matter_category,
+            elo: category.elo,
+            ci95: category.ci95,
+          })) || [],
+        },
+      }));
+    }
+
     async #getLLMAnalytics(): Promise<CleanLLMData[]> {
       try {
         const res = await this.fetchFn(`https://artificialanalysis.ai/api/v2/data/llms/models`, {
@@ -90,70 +117,75 @@ export type RouterClientOptions = {
       }
     }
 
-    async #getTTIAnalytics(): Promise<unknown> {
+    async #getTTIAnalytics(): Promise<CleanMediaData[]> {
         try {
           const res = await this.fetchFn("https://artificialanalysis.ai/api/v2/data/media/text-to-image", {
             method: "GET",
             headers: { "x-api-key": this.AI_ANALYSIS_API },
           });
           if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-          return res.json();
+          const data = await res.json();
+          return this.#extractMediaData(data.data);
         } catch (error) {
           console.error(error);
           throw error;
         }
     }
 
-    async #getImageEditingAnalytics(): Promise<unknown> {
+    async #getImageEditingAnalytics(): Promise<CleanMediaData[]> {
         try {
           const res = await this.fetchFn("https://artificialanalysis.ai/api/v2/data/media/image-editing", {
             method: "GET",
             headers: { "x-api-key": this.AI_ANALYSIS_API },
           });
           if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-          return res.json();
+          const data = await res.json();
+          return this.#extractMediaData(data.data);
         } catch (error) {
           console.error(error);
           throw error;
         }
     }
 
-    async #getTTSAnalytics(): Promise<unknown> {
+    async #getTTSAnalytics(): Promise<CleanMediaData[]> {
         try {
           const res = await this.fetchFn("https://artificialanalysis.ai/api/v2/data/media/text-to-speech", {
             method: "GET",
             headers: { "x-api-key": this.AI_ANALYSIS_API },
           });
           if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-          return res.json();
+          const data = await res.json();
+          return this.#extractMediaData(data.data);
         } catch (error) {
           console.error(error);
           throw error;
         }
     }
 
-    async #getTTVAnalytics(): Promise<unknown> {
+    async #getTTVAnalytics(): Promise<CleanMediaData[]> {
         try {
           const res = await this.fetchFn("https://artificialanalysis.ai/api/v2/data/media/text-to-video", {
             method: "GET",
             headers: { "x-api-key": this.AI_ANALYSIS_API },
           });
           if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-          return res.json();
+          const data = await res.json();
+          return this.#extractMediaData(data.data);
         } catch (error) {
           console.error(error);
           throw error;
         }
     }
 
-    async #getImageAnalytics(): Promise<unknown> {
+    async #getImageAnalytics(): Promise<CleanMediaData[]> {
         try {
           const res = await this.fetchFn("https://artificialanalysis.ai/api/v2/data/media/text-to-video", {
             method: "GET",
             headers: { "x-api-key": this.AI_ANALYSIS_API },
           });
           if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-          return res.json();
+          const data = await res.json();
+          return this.#extractMediaData(data.data);
         } catch (error) {
           console.error(error);
           throw error;
