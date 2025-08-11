@@ -83,7 +83,7 @@ export type RouterClientOptions = {
         });
         if (!res.ok) throw new Error(`Request failed: ${res.status}`);
         const data = await res.json();
-        return this.#extractLLMData(data);
+        return this.#extractLLMData(data.data);
       } catch (error) {
         console.error(error);
         throw error;
