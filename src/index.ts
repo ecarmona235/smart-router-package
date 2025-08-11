@@ -1,1 +1,1 @@
-export { RouterClient } from "./client.js";
+export { RouterClient, type RouterClientOptions } from "./client.js";
