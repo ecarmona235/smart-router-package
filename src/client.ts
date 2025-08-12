@@ -89,7 +89,7 @@ interface RouterClientInterface {
             throw new Error("AI Router is server-only. Do not use in the browser.");
         }
         const key = options.AI_ANALYSIS_API ?? process.env.AI_ANALYSIS_API;
-        if (!key) throw new Error("Missing AI_ANALYSIS_API (or AI_ANALYSIS_API)");
+        if (!key) throw new Error("Missing Artificial Analysis API key (or AI_ANALYSIS_API)");
         this.AI_ANALYSIS_API = key;
         this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
     }
@@ -367,7 +367,7 @@ interface RouterClientInterface {
     }
 
     // Update API key status for providers
-    updateProviderAPIKeyStatus(providerName: string, hasAPIKey: boolean): boolean {
+    #updateProviderAPIKeyStatus(providerName: string, hasAPIKey: boolean): boolean {
         let updated = false;
         
         // Update LLM provider
@@ -394,9 +394,9 @@ interface RouterClientInterface {
     }
 
     // Bulk update API key status for multiple providers
-    updateMultipleProvidersAPIKeyStatus(providerUpdates: Array<{provider: string, hasAPIKey: boolean}>): void {
+    #updateMultipleProvidersAPIKeyStatus(providerUpdates: Array<{provider: string, hasAPIKey: boolean}>): void {
         for (const update of providerUpdates) {
-            this.updateProviderAPIKeyStatus(update.provider, update.hasAPIKey);
+            this.#updateProviderAPIKeyStatus(update.provider, update.hasAPIKey);
         }
         console.log(`Updated API key status for ${providerUpdates.length} providers`);
     }
