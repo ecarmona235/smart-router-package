@@ -1,7 +1,20 @@
 export type RouterClientOptions = {
     AI_ANALYSIS_API?: string;
     fetchFn?: typeof fetch;
- };
+    maxAge?: number; // in hours, default 168 (1 week)
+    hierarchy?: {
+        first: 'last_used' | 'accuracy' | 'price' | 'latency';
+        second: 'last_used' | 'accuracy' | 'price' | 'latency';
+        third: 'last_used' | 'accuracy' | 'price' | 'latency';
+        last: 'last_used' | 'accuracy' | 'price' | 'latency';
+    };
+    providers?: Array<{
+        provider_name: string;
+        api_key: string;
+    }>;
+    stale_clean_up?: boolean; // true by default, removes stale unused models
+    reasoning?: boolean; // false by default, returns reasoning of why model was chosen
+};
 
 // Provider-level interface
 interface ProviderData {
@@ -61,24 +74,23 @@ interface RouterData {
   lastInitialization: number; // Timestamp of last data refresh
 }
 
-// Router client interface
-interface RouterClientInterface {
-  getLastInitialization(): number;
-  isDataStale(maxAgeHours?: number): boolean;
-  ensureFreshData(maxAgeHours?: number): Promise<void>;
-  getDataHealth(): {
-    lastUpdate: Date;
-    ageHours: number;
-    isStale: boolean;
-    status: 'stale' | 'fresh';
-  };
-  updateModelUsage(provider: string, model: string): void; // Update last_used timestamp
-}
+
 
   export class RouterClient {
     private readonly AI_ANALYSIS_API: string;
     private readonly fetchFn: typeof fetch;
     private lastInitialization: number = 0;
+    private readonly providers: Array<{provider_name: string, api_key: string}>;
+    // Configuration options
+    private readonly maxAge: number;
+    private readonly hierarchy: {
+        first: 'last_used' | 'accuracy' | 'price' | 'latency';
+        second: 'last_used' | 'accuracy' | 'price' | 'latency';
+        third: 'last_used' | 'accuracy' | 'price' | 'latency';
+        last: 'last_used' | 'accuracy' | 'price' | 'latency';
+    };
+    private readonly staleCleanUp: boolean;
+    private readonly reasoning: boolean;
     
     // New hierarchical data structure
     private llmProviders: Map<string, LLMProviderData> = new Map();
@@ -92,20 +104,66 @@ interface RouterClientInterface {
         if (!key) throw new Error("Missing Artificial Analysis API key (or AI_ANALYSIS_API)");
         this.AI_ANALYSIS_API = key;
         this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
+        
+        // Set configuration with defaults
+        this.maxAge = options.maxAge ?? 168; // Default: 1 week
+        
+        // Set hierarchy with defaults (accuracy -> price -> latency -> last_used)
+        this.hierarchy = options.hierarchy ?? {
+            first: 'accuracy',
+            second: 'price',
+            third: 'latency',
+            last: 'last_used'
+        };
+        
+        // Set other options with defaults
+        this.staleCleanUp = options.stale_clean_up ?? true;
+        this.reasoning = options.reasoning ?? false;
+        this.providers = options.providers ?? [];
+    }
+
+    // Process provider API keys from options
+    #processProviderAPIKeys(providers: Array<{provider_name: string, api_key: string}>): void {
+        for (const provider of providers) {
+            // Set API key status to true for provided providers
+            this.#updateProviderAPIKeyStatus(provider.provider_name, true);
+        }
+        console.log(`Processed ${providers.length} provider API keys`);
     }
     
     async initialize(): Promise<void> {
-        // Fetch and update data (preserving last_used timestamps)
+        // Clear existing data for fresh start
+        this.llmProviders.clear();
+        this.mediaProviders.clear();
+        
+        // Fetch and populate data fresh
         await this.#populateLLMData();
         await this.#populateMediaData();
         
         // Set initialization timestamp
         this.lastInitialization = Date.now();
+
+                // Process provider API keys if provided
+        if (this.providers) {
+          this.#processProviderAPIKeys(this.providers);
+      }
         
     }
 
+    // Public method to refresh data while preserving last_used timestamps
+    async refreshData(): Promise<void> {
+        // Fetch and update data (preserving last_used timestamps)
+        await this.#populateLLMData();
+        await this.#populateMediaData();
+        
+        // Update initialization timestamp
+        this.lastInitialization = Date.now();
+        
+        console.log('Data refreshed while preserving usage history');
+    }
+
     // Helper methods for ensuring providers and models exist
-    private ensureLLMProvider(providerName: string): LLMProviderData {
+    #ensureLLMProvider(providerName: string): LLMProviderData {
         if (!this.llmProviders.has(providerName)) {
             this.llmProviders.set(providerName, {
                 has_api_key: false, // Will be set when API key is provided
@@ -115,7 +173,7 @@ interface RouterClientInterface {
         return this.llmProviders.get(providerName)!;
     }
 
-    private ensureMediaProvider(providerName: string): MediaProviderData {
+    #ensureMediaProvider(providerName: string): MediaProviderData {
         if (!this.mediaProviders.has(providerName)) {
             this.mediaProviders.set(providerName, {
                 has_api_key: false, // Will be set when API key is provided
@@ -125,8 +183,8 @@ interface RouterClientInterface {
         return this.mediaProviders.get(providerName)!;
     }
 
-    private ensureLLMModel(providerName: string, modelName: string): LLMModelData {
-        const provider = this.ensureLLMProvider(providerName);
+    #ensureLLMModel(providerName: string, modelName: string): LLMModelData {
+        const provider = this.#ensureLLMProvider(providerName);
         if (!provider.models.has(modelName)) {
             provider.models.set(modelName, {
                 name: modelName,
@@ -144,8 +202,8 @@ interface RouterClientInterface {
         return provider.models.get(modelName)!;
     }
 
-    private ensureMediaModel(providerName: string, modelName: string): MediaModelData {
-        const provider = this.ensureMediaProvider(providerName);
+    #ensureMediaModel(providerName: string, modelName: string): MediaModelData {
+        const provider = this.#ensureMediaProvider(providerName);
         if (!provider.models.has(modelName)) {
             provider.models.set(modelName, {
                 name: modelName,
@@ -195,7 +253,7 @@ interface RouterClientInterface {
         for (const item of data) {
             const providerName = item.model_creator.name;
             const modelName = item.name;
-            const modelData = this.ensureLLMModel(providerName, modelName);
+            const modelData = this.#ensureLLMModel(providerName, modelName);
 
             // Update model data (preserving last_used if it exists)
             modelData.price_per_1M_input_tokens = item.price_per_1M_input_tokens;
@@ -240,7 +298,7 @@ interface RouterClientInterface {
         for (const item of data) {
             const providerName = item.model_creator.name;
             const modelName = item.name;
-            const modelData = this.ensureMediaModel(providerName, modelName);
+            const modelData = this.#ensureMediaModel(providerName, modelName);
 
             // Update model data (preserving last_used if it exists)
             modelData.model_type = model_type;
@@ -323,49 +381,6 @@ interface RouterClientInterface {
         }
     }
 
-    // User-controlled removal methods
-    removeProvider(providerName: string): boolean {
-        const llmRemoved = this.llmProviders.delete(providerName);
-        const mediaRemoved = this.mediaProviders.delete(providerName);
-        
-        if (llmRemoved || mediaRemoved) {
-            console.log(`Removed provider: ${providerName}`);
-            return true;
-        }
-        return false;
-    }
-
-    removeModel(providerName: string, modelName: string): boolean {
-        let removed = false;
-        
-        // Remove from LLM providers
-        const llmProvider = this.llmProviders.get(providerName);
-        if (llmProvider?.models.has(modelName)) {
-            llmProvider.models.delete(modelName);
-            removed = true;
-        }
-        
-        // Remove from media providers
-        const mediaProvider = this.mediaProviders.get(providerName);
-        if (mediaProvider?.models.has(modelName)) {
-            mediaProvider.models.delete(modelName);
-            removed = true;
-        }
-        
-        // Clean up empty providers
-        if (llmProvider && llmProvider.models.size === 0) {
-            this.llmProviders.delete(providerName);
-        }
-        if (mediaProvider && mediaProvider.models.size === 0) {
-            this.mediaProviders.delete(providerName);
-        }
-        
-        if (removed) {
-            console.log(`Removed model: ${providerName}:${modelName}`);
-        }
-        return removed;
-    }
-
     // Update API key status for providers
     #updateProviderAPIKeyStatus(providerName: string, hasAPIKey: boolean): boolean {
         let updated = false;
@@ -393,28 +408,146 @@ interface RouterClientInterface {
         return updated;
     }
 
-    // Bulk update API key status for multiple providers
-    #updateMultipleProvidersAPIKeyStatus(providerUpdates: Array<{provider: string, hasAPIKey: boolean}>): void {
-        for (const update of providerUpdates) {
-            this.#updateProviderAPIKeyStatus(update.provider, update.hasAPIKey);
+    #updateModelUsage(provider: string, model: string): void {
+      // Update LLM model usage
+      const llmModel = this.llmProviders.get(provider)?.models.get(model);
+      if (llmModel) {
+          llmModel.last_used = new Date();
+      }
+
+      // Update media model usage
+      const mediaModel = this.mediaProviders.get(provider)?.models.get(model);
+      if (mediaModel) {
+          mediaModel.last_used = new Date();
+      }
+  }
+
+  async #makeAPICall(endpoint: string): Promise<any[]> {
+    try {
+      const res = await this.fetchFn(`https://artificialanalysis.ai/api/v2/data/${endpoint}`, {
+        method: "GET",
+        headers: { "x-api-key": this.AI_ANALYSIS_API },
+      });
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      const data = await res.json();
+      return data.data;
+    } catch (error) {
+      console.error(`API call failed for ${endpoint}:`, error);
+      throw error;
+    }
+  }
+
+
+    //////////////////   User avaliable methods     ////////////////////////////////////
+    getHierarchy() {
+        return this.hierarchy;
+    }
+
+    getMaxAge() {
+        return this.maxAge;
+    }
+
+    isReasoningEnabled() {
+        return this.reasoning;
+    }
+
+    isStaleCleanUpEnabled() {
+        return this.staleCleanUp;
+    }
+
+    getProviders(): string[] {
+        return this.providers.map(p => p.provider_name);
+    }
+
+    // Configuration setters
+    setMaxAge(maxAge: number): void {
+        if (maxAge <= 0) {
+            throw new Error('maxAge must be greater than 0');
         }
-        console.log(`Updated API key status for ${providerUpdates.length} providers`);
+        (this as any).maxAge = maxAge; // TypeScript readonly workaround
+        console.log(`Max age updated to ${maxAge} hours`);
+    }
+
+    setHierarchy(hierarchy: {
+        first: 'last_used' | 'accuracy' | 'price' | 'latency';
+        second: 'last_used' | 'accuracy' | 'price' | 'latency';
+        third: 'last_used' | 'accuracy' | 'price' | 'latency';
+        last: 'last_used' | 'accuracy' | 'price' | 'latency';
+    }): void {
+        (this as any).hierarchy = hierarchy; // TypeScript readonly workaround
+        console.log('Routing hierarchy updated:', hierarchy);
+    }
+
+    setReasoning(enabled: boolean): void {
+        (this as any).reasoning = enabled; // TypeScript readonly workaround
+        console.log(`Reasoning ${enabled ? 'enabled' : 'disabled'}`);
+    }
+
+    setStaleCleanUp(enabled: boolean): void {
+        (this as any).staleCleanUp = enabled; // TypeScript readonly workaround
+        console.log(`Stale cleanup ${enabled ? 'enabled' : 'disabled'}`);
+    }
+
+    // Provider management
+    addProvider(providerName: string, apiKey: string): void {
+        // Check if provider already exists
+        const existingProvider = this.providers.find(p => p.provider_name === providerName);
+        if (existingProvider) {
+            existingProvider.api_key = apiKey; // Update existing API key
+            console.log(`Updated API key for provider: ${providerName}`);
+        } else {
+            this.providers.push({ provider_name: providerName, api_key: apiKey });
+            console.log(`Added new provider: ${providerName}`);
+        }
+        
+        // Update provider access status
+        this.#updateProviderAPIKeyStatus(providerName, true);
+    }
+
+    removeProviderFromConfig(providerName: string): boolean {
+        const index = this.providers.findIndex(p => p.provider_name === providerName);
+        if (index !== -1) {
+            this.providers.splice(index, 1);
+            
+            // Update provider access status to false
+            this.#updateProviderAPIKeyStatus(providerName, false);
+            
+            console.log(`Removed provider from config: ${providerName}`);
+            return true;
+        }
+        return false;
+    }
+
+    updateProviderAPIKey(providerName: string, newApiKey: string): boolean {
+        const provider = this.providers.find(p => p.provider_name === providerName);
+        if (provider) {
+            provider.api_key = newApiKey;
+            console.log(`Updated API key for provider: ${providerName}`);
+            return true;
+        }
+        return false;
     }
 
     // Data health and freshness methods
+    isInitialized(): boolean {
+        return this.lastInitialization > 0;
+    }
+
     getLastInitialization(): number {
         return this.lastInitialization;
     }
 
-    isDataStale(maxAgeHours: number = 168): boolean { // 168 = 7 days * 24 hours
+    isDataStale(maxAgeHours?: number): boolean {
+        const ageToUse = maxAgeHours ?? this.maxAge; // Use configured default if not specified
         const hoursSinceUpdate = (Date.now() - this.lastInitialization) / (1000 * 60 * 60);
-        return hoursSinceUpdate > maxAgeHours;
+        return hoursSinceUpdate > ageToUse;
     }
 
-    async ensureFreshData(maxAgeHours: number = 168): Promise<void> { // Default to 1 week
-        if (this.isDataStale(maxAgeHours)) {
-            console.log('Data is stale, re-initializing...');
-            await this.initialize();
+    async ensureFreshData(maxAgeHours?: number): Promise<void> {
+        const ageToUse = maxAgeHours ?? this.maxAge; // Use configured default if not specified
+        if (this.isDataStale(ageToUse)) {
+            console.log('Data is stale, refreshing...');
+            await this.refreshData();
         }
     }
 
@@ -425,37 +558,53 @@ interface RouterClientInterface {
         return {
             lastUpdate: new Date(this.lastInitialization),
             ageHours: Math.round(ageHours * 100) / 100,
-            isStale: ageHours > 168, // Check against 1 week default
-            status: ageHours > 168 ? 'stale' as const : 'fresh' as const
+            isStale: ageHours > this.maxAge, // Check against configured default
+            status: ageHours > this.maxAge ? 'stale' as const : 'fresh' as const
         };
     }
 
-    updateModelUsage(provider: string, model: string): void {
-        // Update LLM model usage
-        const llmModel = this.llmProviders.get(provider)?.models.get(model);
-        if (llmModel) {
-            llmModel.last_used = new Date();
-        }
-
-        // Update media model usage
-        const mediaModel = this.mediaProviders.get(provider)?.models.get(model);
-        if (mediaModel) {
-            mediaModel.last_used = new Date();
-        }
-    }
-
-    async #makeAPICall(endpoint: string): Promise<any[]> {
-      try {
-        const res = await this.fetchFn(`https://artificialanalysis.ai/api/v2/data/${endpoint}`, {
-          method: "GET",
-          headers: { "x-api-key": this.AI_ANALYSIS_API },
-        });
-        if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-        const data = await res.json();
-        return data.data;
-      } catch (error) {
-        console.error(`API call failed for ${endpoint}:`, error);
-        throw error;
+    // User-controlled removal methods
+    removeProvider(providerName: string): boolean {
+      const llmRemoved = this.llmProviders.delete(providerName);
+      const mediaRemoved = this.mediaProviders.delete(providerName);
+      
+      if (llmRemoved || mediaRemoved) {
+          console.log(`Removed provider: ${providerName}`);
+          return true;
       }
-    }
+      return false;
   }
+
+  removeModel(providerName: string, modelName: string): boolean {
+      let removed = false;
+      
+      // Remove from LLM providers
+      const llmProvider = this.llmProviders.get(providerName);
+      if (llmProvider?.models.has(modelName)) {
+          llmProvider.models.delete(modelName);
+          removed = true;
+      }
+      
+      // Remove from media providers
+      const mediaProvider = this.mediaProviders.get(providerName);
+      if (mediaProvider?.models.has(modelName)) {
+          mediaProvider.models.delete(modelName);
+          removed = true;
+      }
+      
+      // Clean up empty providers
+      if (llmProvider && llmProvider.models.size === 0) {
+          this.llmProviders.delete(providerName);
+      }
+      if (mediaProvider && mediaProvider.models.size === 0) {
+          this.mediaProviders.delete(providerName);
+      }
+      
+      if (removed) {
+          console.log(`Removed model: ${providerName}:${modelName}`);
+      }
+      return removed;
+  }
+
+
+}
