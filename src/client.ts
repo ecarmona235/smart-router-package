@@ -81,20 +81,24 @@ interface RouterData {
     private readonly fetchFn: typeof fetch;
     private lastInitialization: number = 0;
     private readonly providers: Array<{provider_name: string, api_key: string}>;
-    // Configuration options
-    private readonly maxAge: number;
-    private readonly hierarchy: {
+    // Configuration options (mutable for user updates)
+    private maxAge: number;
+    private hierarchy: {
         first: 'last_used' | 'accuracy' | 'price' | 'latency';
         second: 'last_used' | 'accuracy' | 'price' | 'latency';
         third: 'last_used' | 'accuracy' | 'price' | 'latency';
         last: 'last_used' | 'accuracy' | 'price' | 'latency';
     };
-    private readonly staleCleanUp: boolean;
-    private readonly reasoning: boolean;
+    private staleCleanUp: boolean;
+    private reasoning: boolean;
     
     // New hierarchical data structure
     private llmProviders: Map<string, LLMProviderData> = new Map();
     private mediaProviders: Map<string, MediaProviderData> = new Map();
+    
+    // Provider name resolution system
+    private providerMappings: Map<string, string> = new Map(); // user_name -> actual_name
+    private providerApiKeys: Map<string, string> = new Map(); // user_name -> api_key
     
     constructor(options: RouterClientOptions = {}) {
         if (typeof window !== "undefined") {
@@ -120,6 +124,91 @@ interface RouterData {
         this.staleCleanUp = options.stale_clean_up ?? true;
         this.reasoning = options.reasoning ?? false;
         this.providers = options.providers ?? [];
+        
+        // Process provider API keys if provided
+        if (this.providers.length > 0) {
+            this.#processProviderAPIKeys(this.providers);
+        }
+    }
+
+    // Normalize provider names for matching
+    #normalizeProviderName(name: string): string {
+        return name
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '') // Remove spaces, hyphens, etc.
+            .trim();
+    }
+
+    // Find closest provider using fuzzy matching against API data only
+    #findClosestProvider(userInput: string): string | null {
+        const normalizedInput = this.#normalizeProviderName(userInput);
+        let bestMatch: string | null = null;
+        let bestScore = Infinity;
+        
+        // Check against actual API provider names from LLM data
+        for (const [apiProviderName] of this.llmProviders) {
+            const normalizedApi = this.#normalizeProviderName(apiProviderName);
+            const distance = this.#levenshteinDistance(normalizedInput, normalizedApi);
+            
+            if (distance < bestScore && distance <= 2) { // Allow 2 character differences
+                bestScore = distance;
+                bestMatch = apiProviderName;
+            }
+        }
+        
+        // Also check media providers
+        for (const [apiProviderName] of this.mediaProviders) {
+            const normalizedApi = this.#normalizeProviderName(apiProviderName);
+            const distance = this.#levenshteinDistance(normalizedInput, normalizedApi);
+            
+            if (distance < bestScore && distance <= 2) { // Allow 2 character differences
+                bestScore = distance;
+                bestMatch = apiProviderName;
+            }
+        }
+        
+        return bestMatch;
+    }
+
+    #levenshteinDistance(str1: string, str2: string): number {
+      if (str1.length === 0) return str2.length;
+      if (str2.length === 0) return str1.length;
+      
+      // Initialize matrix with explicit typing to avoid undefined errors
+      const matrix: number[][] = [];
+      for (let j = 0; j <= str2.length; j++) {
+          const row: number[] = new Array(str1.length + 1).fill(0);
+          matrix[j] = row;
+      }
+      
+      // Fill first row and column
+      for (let i = 0; i <= str1.length; i++) {
+          matrix[0]![i] = i;
+      }
+      for (let j = 0; j <= str2.length; j++) {
+          matrix[j]![0] = j;
+      }
+      
+      // Fill rest of matrix
+      for (let j = 1; j <= str2.length; j++) {
+          for (let i = 1; i <= str1.length; i++) {
+              const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+              const currentRow = matrix[j]!;
+              const prevRow = matrix[j - 1]!;
+              currentRow[i] = Math.min(
+                  currentRow[i - 1]! + 1,
+                  prevRow[i]! + 1,
+                  prevRow[i - 1]! + cost
+              );
+          }
+      }
+      
+      return matrix[str2.length]![str1.length]!;
+  }
+
+    // Resolve provider name using fuzzy matching against API data
+    #resolveProviderName(userInput: string): string | null {
+        return this.#findClosestProvider(userInput);
     }
 
     // Process provider API keys from options
@@ -464,7 +553,7 @@ interface RouterData {
         if (maxAge <= 0) {
             throw new Error('maxAge must be greater than 0');
         }
-        (this as any).maxAge = maxAge; // TypeScript readonly workaround
+        this.maxAge = maxAge;
         console.log(`Max age updated to ${maxAge} hours`);
     }
 
@@ -474,17 +563,17 @@ interface RouterData {
         third: 'last_used' | 'accuracy' | 'price' | 'latency';
         last: 'last_used' | 'accuracy' | 'price' | 'latency';
     }): void {
-        (this as any).hierarchy = hierarchy; // TypeScript readonly workaround
+        this.hierarchy = hierarchy;
         console.log('Routing hierarchy updated:', hierarchy);
     }
 
     setReasoning(enabled: boolean): void {
-        (this as any).reasoning = enabled; // TypeScript readonly workaround
+        this.reasoning = enabled;
         console.log(`Reasoning ${enabled ? 'enabled' : 'disabled'}`);
     }
 
     setStaleCleanUp(enabled: boolean): void {
-        (this as any).staleCleanUp = enabled; // TypeScript readonly workaround
+        this.staleCleanUp = enabled;
         console.log(`Stale cleanup ${enabled ? 'enabled' : 'disabled'}`);
     }
 
