@@ -563,6 +563,16 @@ interface RouterData {
         third: 'last_used' | 'accuracy' | 'price' | 'latency';
         last: 'last_used' | 'accuracy' | 'price' | 'latency';
     }): void {
+        // Validate that all values are valid hierarchy options
+        const validOptions = ['last_used', 'accuracy', 'price', 'latency'] as const;
+        const values = [hierarchy.first, hierarchy.second, hierarchy.third, hierarchy.last];
+        
+        for (const value of values) {
+            if (!validOptions.includes(value)) {
+                throw new Error(`Invalid hierarchy option: ${value}. Must be one of: ${validOptions.join(', ')}`);
+            }
+        }
+        
         this.hierarchy = hierarchy;
         console.log('Routing hierarchy updated:', hierarchy);
     }
