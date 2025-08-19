@@ -30,5 +30,8 @@
     "dotenv": "^17.2.1",
     "tsup": "^8.5.0",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "openai": "^5.13.1"
   }
 }
