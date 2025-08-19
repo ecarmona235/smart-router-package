@@ -1,3 +1,3 @@
 export * from './base.js';
-// export * from './openai';
-// export * from './gemini'; 
+export * from './openai.js';
+export * from './gemini.js'; 
