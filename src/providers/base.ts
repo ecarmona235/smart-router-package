@@ -52,10 +52,46 @@ export interface BaseProvider {
     }
   }
   
+  // Provider configuration mapping - all providers
+  export const PROVIDER_CONFIGS = {
+    'openai': {
+      baseURL: 'https://api.openai.com',
+      name: 'OpenAI'
+    },
+    'xai': {
+      baseURL: 'https://api.x.ai',
+      name: 'X AI'
+    },
+    'deepseek': {
+      baseURL: 'https://api.deepseek.com',
+      name: 'DeepSeek'
+    },
+    'meta-llama': {
+      baseURL: 'https://api.together.xyz',
+      name: 'Meta (via Together AI)'
+    },
+    'meta-llama-groq': {
+      baseURL: 'https://api.groq.com',
+      name: 'Meta (via Groq)'
+    },
+    'anthropic': {
+      baseURL: 'https://api.anthropic.com',
+      name: 'Anthropic'
+    },
+    'cohere': {
+      baseURL: 'https://api.cohere.com',
+      name: 'Cohere'
+    }
+  } as const;
+  
+  export type ProviderName = keyof typeof PROVIDER_CONFIGS;
+
   // TODO: Future additions for enhanced functionality
   // - sendEmbedding(model: string, text: string): Promise<ProviderResult<number[]>>
   // - generateImage(model: string, prompt: string): Promise<ProviderResult<string>>
   // - transcribeAudio(model: string, audioData: Buffer): Promise<ProviderResult<string>>
+  // - generateAudio(model: string, text: string): Promise<ProviderResult<string>>
+  // - generateVideo(model: string, text: string): Promise<ProviderResult<string>>
   // - streamMessage(model: string, message: string): Promise<ProviderResult<ReadableStream>>
   
   // TODO: Implement retry mechanisms
