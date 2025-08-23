@@ -295,14 +295,8 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
    * Select cheapest models for the relevant metrics
    */
   private selectCheapestModels(models: (LLMModelData | MediaModelData)[], analysis: AnalysisResult): (LLMModelData | MediaModelData)[] {
-    // Use analysis to determine which metrics to prioritize for cost optimization
-    const relevantMetrics = analysis.relevantMetrics;
-    
+    // Models are already filtered by relevant metrics, just sort by price
     return models
-      .filter(model => {
-        // Check if model has any of the relevant metrics
-        return relevantMetrics.some(metric => model.evaluations.has(metric));
-      })
       .filter(model => 'price' in model && model.price > 0) // Only models with price info
       .sort((a, b) => (a as any).price - (b as any).price) // Sort by price (lowest first)
       .slice(0, 5); // Return top 5 cheapest
@@ -312,14 +306,10 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
    * Select most accurate models based on evaluation scores
    */
   private selectMostAccurateModels(models: (LLMModelData | MediaModelData)[], analysis: AnalysisResult): (LLMModelData | MediaModelData)[] {
-    // Use analysis to determine which metrics to prioritize for accuracy
+    // Models are already filtered by relevant metrics, just sort by accuracy
     const relevantMetrics = analysis.relevantMetrics;
     
     return models
-      .filter(model => {
-        // Check if model has any of the relevant metrics
-        return relevantMetrics.some(metric => model.evaluations.has(metric));
-      })
       .sort((a, b) => {
         // Calculate average score across relevant metrics
         const aScore = relevantMetrics.reduce((sum, metric) => 
@@ -336,7 +326,7 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
    */
   private selectBalancedModels(models: (LLMModelData | MediaModelData)[]): (LLMModelData | MediaModelData)[] {
     return models
-      .filter(model => 'price' in model && model.price > 0 && model.evaluations.size > 0)
+      .filter(model => 'price' in model && model.price > 0) // Only models with price info
       .map(model => {
         // Calculate value score = average evaluation / price
         const avgEvaluation = Array.from(model.evaluations.values()).reduce((sum, val) => sum + val, 0) / model.evaluations.size;

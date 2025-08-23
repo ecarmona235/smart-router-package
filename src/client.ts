@@ -283,26 +283,28 @@ interface MediaProviderData extends ProviderData {
 
     /**
      * Get filtered models based on API keys and relevant metrics
-     * @param relevantMetrics - Array of relevant evaluation metrics
-     * @param priorityMetrics - Array of priority evaluation metrics (for future use)
+     * @param relevantMetrics - Array of relevant evaluation metrics for filtering
+     * @param priorityMetrics - Array of priority evaluation metrics (not used in filtering)
      * @param count - Maximum number of models to return (default: 10)
-     * @returns Array of filtered models ready for LLM ranking and execution
+     * @returns Array of filtered models ready for strategy-based selection
      */
     getFilteredModels(relevantMetrics: string[], priorityMetrics: string[], count: number = 10): (LLMModelData | MediaModelData)[] {
       try {
         console.log(`[Model Selection] Starting model filtering with ${relevantMetrics.length} relevant metrics and ${priorityMetrics.length} priority metrics`);
+        console.log(`[Model Selection] Relevant metrics: ${relevantMetrics.join(', ')}`);
+        console.log(`[Model Selection] Priority metrics: ${priorityMetrics.join(', ')}`);
         
         // Step 1: API Key Validation - only models from configured providers
         const apiKeyValidModels = this.getModelsWithAPIKeys();
         console.log(`[Model Selection] Found ${apiKeyValidModels.length} models with valid API keys`);
         
-        // Step 2: Metric-Based Filtering - models with relevant metrics
+        // Step 2: Metric-Based Filtering (models with relevant metrics)
         const metricFilteredModels = this.filterModelsByMetrics(apiKeyValidModels, relevantMetrics, priorityMetrics);
-        console.log(`[Model Selection] After metric filtering: ${metricFilteredModels.length} models`);
+        console.log(`[Model Selection] After metric filtering: ${metricFilteredModels.length} models with relevant metrics`);
         
-        // Step 3: Return filtered models (LLM will handle ranking in execution phase)
+        // Step 3: Return filtered models (selection strategy will handle ranking)
         const topModels = metricFilteredModels.slice(0, count);
-        console.log(`[Model Selection] Returning ${topModels.length} filtered models for LLM ranking`);
+        console.log(`[Model Selection] Returning ${topModels.length} filtered models for strategy-based selection`);
         
         return topModels;
       } catch (error) {
@@ -363,22 +365,18 @@ interface MediaProviderData extends ProviderData {
       return validModels;
     }
 
-    /**
-     * Filter models based on relevant and priority metrics
+        /**
+     * Filter models based on relevant metrics only
+     * Selection strategy will determine how to rank/order these models
      */
     private filterModelsByMetrics(
       models: (LLMModelData | MediaModelData)[], 
       relevantMetrics: string[], 
-      priorityMetrics: string[]
+      priorityMetrics: string[] // Not used here - strategy determines ordering
     ): (LLMModelData | MediaModelData)[] {
-      return models.filter(model => {
-        // Check if model has any of the relevant metrics
-        for (const metric of relevantMetrics) {
-          if (model.evaluations.has(metric)) {
-            return true; // Model has at least one relevant metric
-          }
-        }
-        return false;
-      });
+      // Filter models to only include those with relevant metrics
+      return models.filter(model => 
+        relevantMetrics.some(metric => model.evaluations.has(metric))
+      );
     }
 }

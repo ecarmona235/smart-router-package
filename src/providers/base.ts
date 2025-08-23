@@ -96,12 +96,5 @@ export interface BaseProvider {
   
   // TODO: Implement retry mechanisms
   // - Exponential backoff for failed requests
-  // - Configurable retry limits per provider
-  // - Jitter to prevent thundering herd problems
   // - Retry only on specific error types (network, rate limits)
   
-  // TODO: Implement circuit breakers
-  // - Track failure rates per provider
-  // - Automatically disable failing providers temporarily
-  // - Gradual recovery with health checks
-  // - Configurable thresholds and timeouts
