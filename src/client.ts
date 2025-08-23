@@ -1,3 +1,6 @@
+import type { BaseProvider, ProviderResult, ProviderError, ProviderName, PROVIDER_CONFIGS } from './providers/base.js';
+import { ChatService } from './services/ChatService.js';
+
 export type RouterClientOptions = {
     AI_ANALYSIS_API?: string;
     fetchFn?: typeof fetch;
@@ -14,6 +17,10 @@ export type RouterClientOptions = {
     }>;
     stale_clean_up?: boolean; // true by default, removes stale unused models
     reasoning?: boolean; // false by default, returns reasoning of why model was chosen
+    analysisProvider?: {
+        provider: string;
+        model: string;
+    };
 };
 
 // Provider-level interface
@@ -96,9 +103,9 @@ interface RouterData {
     private llmProviders: Map<string, LLMProviderData> = new Map();
     private mediaProviders: Map<string, MediaProviderData> = new Map();
     
-    // Provider name resolution system
-    private providerMappings: Map<string, string> = new Map(); // user_name -> actual_name
-    private providerApiKeys: Map<string, string> = new Map(); // user_name -> api_key
+    // Chat service for handling user requests
+    private chatService: ChatService;
+    
     
     constructor(options: RouterClientOptions = {}) {
         if (typeof window !== "undefined") {
@@ -129,6 +136,9 @@ interface RouterData {
         if (this.providers.length > 0) {
             this.#processProviderAPIKeys(this.providers);
         }
+        
+        // Initialize chat service
+        this.chatService = new ChatService(this, options.analysisProvider);
     }
 
     // Normalize provider names for matching
@@ -349,7 +359,6 @@ interface RouterData {
             modelData.price_per_1M_output_tokens = item.price_per_1M_output_tokens;
             modelData.median_output_tokens_per_second = item.median_output_tokens_per_second;
             modelData.median_time_to_first_token = item.median_time_to_first_token;
-            
             // Set price and latency for base ModelData
             modelData.price = item.price_per_1M_input_tokens;
             modelData.latency = item.median_time_to_first_token;
@@ -548,6 +557,13 @@ interface RouterData {
         return this.providers.map(p => p.provider_name);
     }
 
+    /**
+     * Get provider configuration including API key
+     */
+    getProviderConfig(providerName: string): {provider_name: string, api_key: string} | undefined {
+        return this.providers.find(p => p.provider_name === providerName);
+    }
+
     // Configuration setters
     setMaxAge(maxAge: number): void {
         if (maxAge <= 0) {
@@ -705,5 +721,96 @@ interface RouterData {
       return removed;
   }
 
+  /**
+   * Execute a chat request using the smart routing system
+   */
+  async chat(userRequest: string): Promise<{success: boolean, data: string, reasoning?: string | undefined}> {
+    return this.chatService.execute(userRequest);
+  }
 
+  /**
+   * Update the analysis provider used for request analysis
+   */
+  updateAnalysisProvider(config: {
+    provider: string;
+    model: string;
+  }): void {
+    this.chatService.updateAnalysisProvider(config);
+  }
+
+  /**
+   * Get filtered models based on API keys and relevant metrics
+   * @param relevantMetrics - Array of relevant evaluation metrics
+   * @param priorityMetrics - Array of priority evaluation metrics (for future use)
+   * @param count - Maximum number of models to return (default: 10)
+   * @returns Array of filtered models ready for LLM ranking and execution
+   */
+  getFilteredModels(relevantMetrics: string[], priorityMetrics: string[], count: number = 10): (LLMModelData | MediaModelData)[] {
+    try {
+      console.log(`[Model Selection] Starting model filtering with ${relevantMetrics.length} relevant metrics and ${priorityMetrics.length} priority metrics`);
+      
+      // Step 1: API Key Validation - only models from configured providers
+      const apiKeyValidModels = this.getModelsWithAPIKeys();
+      console.log(`[Model Selection] Found ${apiKeyValidModels.length} models with valid API keys`);
+      
+      // Step 2: Metric-Based Filtering - models with relevant metrics
+      const metricFilteredModels = this.filterModelsByMetrics(apiKeyValidModels, relevantMetrics, priorityMetrics);
+      console.log(`[Model Selection] After metric filtering: ${metricFilteredModels.length} models`);
+      
+      // Step 3: Return filtered models (LLM will handle ranking in execution phase)
+      const topModels = metricFilteredModels.slice(0, count);
+      console.log(`[Model Selection] Returning ${topModels.length} filtered models for LLM ranking`);
+      
+      return topModels;
+    } catch (error) {
+      console.error('[Model Selection] Error in model filtering:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get all models from providers that have API keys configured
+   */
+  private getModelsWithAPIKeys(): (LLMModelData | MediaModelData)[] {
+    const validModels: (LLMModelData | MediaModelData)[] = [];
+    
+    // Collect LLM models with API keys
+    for (const [providerName, providerData] of this.llmProviders) {
+      if (providerData.has_api_key) {
+        for (const [modelName, modelData] of providerData.models) {
+          validModels.push(modelData);
+        }
+      }
+    }
+    
+    // Collect Media models with API keys
+    for (const [providerName, providerData] of this.mediaProviders) {
+      if (providerData.has_api_key) {
+        for (const [modelName, modelData] of providerData.models) {
+          validModels.push(modelData);
+        }
+      }
+    }
+    
+    return validModels;
+  }
+
+  /**
+   * Filter models based on relevant and priority metrics
+   */
+  private filterModelsByMetrics(
+    models: (LLMModelData | MediaModelData)[], 
+    relevantMetrics: string[], 
+    priorityMetrics: string[]
+  ): (LLMModelData | MediaModelData)[] {
+    return models.filter(model => {
+      // Check if model has any of the relevant metrics
+      for (const metric of relevantMetrics) {
+        if (model.evaluations.has(metric)) {
+          return true; // Model has at least one relevant metric
+        }
+      }
+      return false;
+    });
+  }
 }
