@@ -218,7 +218,8 @@ export class DataManagementService {
       this.llmProviders.set(providerName, {
         has_api_key: false, // Will be set when API key is provided
         models: new Map(),
-        last_used: null // Initialize as null, not used yet
+        last_used: null, // Initialize as null, not used yet
+        capabilities: [] // Initialize empty, will be populated when API key is added
       });
     }
     return this.llmProviders.get(providerName)!;
@@ -232,7 +233,8 @@ export class DataManagementService {
       this.mediaProviders.set(providerName, {
         has_api_key: false, // Will be set when API key is provided
         models: new Map(),
-        last_used: null // Initialize as null, not used yet
+        last_used: null, // Initialize as null, not used yet
+        capabilities: [] // Initialize empty, will be populated when API key is added
       });
     }
     return this.mediaProviders.get(providerName)!;

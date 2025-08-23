@@ -1,3 +1,5 @@
+import { createProvider } from '../providers/factory.js';
+
 export class ProviderManagementService {
   private llmProviders: Map<string, any>; // Will be passed from RouterClient
   private mediaProviders: Map<string, any>; // Will be passed from RouterClient
@@ -18,8 +20,29 @@ export class ProviderManagementService {
    */
   processProviderAPIKeys(providers: Array<{provider_name: string, api_key: string}>): void {
     for (const provider of providers) {
-      // Set API key status to true for provided providers
-      this.updateProviderAPIKeyStatus(provider.provider_name, true);
+      try {
+        // Create provider instance to test API key and get capabilities
+        const providerInstance = createProvider(provider.provider_name as any, provider.api_key);
+        
+        // Test if provider is available (API key works)
+        if (providerInstance.isAvailable()) {
+          // Get provider capabilities
+          const capabilities = providerInstance.getCapabilities();
+          console.log(`Provider ${provider.provider_name} capabilities: ${capabilities.join(', ')}`);
+          
+          // Store capabilities with provider data
+          this.updateProviderCapabilities(provider.provider_name, capabilities);
+          
+          // Set API key status to true for provided providers
+          this.updateProviderAPIKeyStatus(provider.provider_name, true);
+        } else {
+          console.warn(`Provider ${provider.provider_name} API key validation failed`);
+          this.updateProviderAPIKeyStatus(provider.provider_name, false);
+        }
+      } catch (error) {
+        console.error(`Error processing provider ${provider.provider_name}:`, error);
+        this.updateProviderAPIKeyStatus(provider.provider_name, false);
+      }
     }
     console.log(`Processed ${providers.length} provider API keys`);
   }
@@ -70,6 +93,35 @@ export class ProviderManagementService {
       mediaProvider.last_used = new Date();
       console.log(`[ProviderService] Updated Media provider usage: ${providerName}`);
     }
+  }
+
+  /**
+   * Update provider capabilities
+   */
+  updateProviderCapabilities(providerName: string, capabilities: string[]): boolean {
+    let updated = false;
+    
+    // Update LLM provider capabilities
+    const llmProvider = this.llmProviders.get(providerName);
+    if (llmProvider) {
+      llmProvider.capabilities = capabilities;
+      updated = true;
+    }
+    
+    // Update media provider capabilities
+    const mediaProvider = this.mediaProviders.get(providerName);
+    if (mediaProvider) {
+      mediaProvider.capabilities = capabilities;
+      updated = true;
+    }
+    
+    if (updated) {
+      console.log(`Updated capabilities for ${providerName}: ${capabilities.join(', ')}`);
+    } else {
+      console.log(`Provider not found for capability update: ${providerName}`);
+    }
+    
+    return updated;
   }
 
   /**

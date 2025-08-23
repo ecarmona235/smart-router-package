@@ -18,6 +18,7 @@ export interface AnalysisResult {
   relevantMetrics: string[];
   priorityMetrics: string[];
   modelType: 'llm' | 'media';
+  capability: 'text' | 'image' | 'audio' | 'video' | 'embedding';
 }
 
 // Available evaluation metrics
@@ -158,10 +159,11 @@ export class ChatService {
    * Build prompt for LLM analysis
    */
   private buildAnalysisPrompt(userRequest: string): string {
-    return `Analyze this user request and determine the best metrics for model selection.
+    return `Analyze this user request and determine the best metrics and capability for model selection.
 
 User Request: "${userRequest}"
 
+Available Capabilities: text, image, audio, video, embedding
 Available Metrics: ${EVALUATION_METRICS.join(', ')}
 
 Please respond in this exact JSON format:
@@ -170,9 +172,13 @@ Please respond in this exact JSON format:
   "relevantMetrics": ["array", "of", "relevant", "metrics"],
   "priorityMetrics": ["array", "of", "priority", "metrics"],
   "modelType": "llm" or "media",
+  "capability": "text" or "image" or "audio" or "video" or "embedding"
 }
 
-Focus on selecting 2-4 most relevant metrics that would best evaluate model performance for this request.`;
+Focus on:
+- What capability does the user actually need?
+- Which metrics best evaluate that capability?
+- Is this a text task or media generation task?`;
   }
 
   /**
@@ -194,6 +200,7 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
           .filter((metric: string) => validMetrics.has(metric as typeof EVALUATION_METRICS[number]))
           .slice(0, 2), // Max 2 priority metrics
         modelType: parsed.modelType === 'media' ? 'media' : 'llm',
+        capability: parsed.capability || 'text',
       };
     } catch (error) {
       console.error('[ChatService] Error parsing analysis response:', error);
@@ -211,6 +218,7 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
       relevantMetrics: ['artificial_analysis_intelligence_index', 'artificial_analysis_coding_index'],
       priorityMetrics: ['artificial_analysis_intelligence_index'],
       modelType: 'llm',
+      capability: 'text',
     };
   }
 
@@ -225,9 +233,9 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
       const analysis = await this.analyzeRequest(userRequest);
       console.log(`[ChatService] LLM Analysis: ${analysis.requestType}, Metrics: ${analysis.relevantMetrics.join(', ')}, Model Type: ${analysis.modelType}`);
       
-      // Phase 2: Filter models based on LLM analysis (relevant metrics + API keys)
-      const filteredModels = this.client.getFilteredModels(analysis.relevantMetrics, analysis.priorityMetrics, 10);
-      console.log(`[ChatService] Retrieved ${filteredModels.length} filtered models based on LLM analysis`);
+      // Phase 2: Filter models based on LLM analysis (relevant metrics + capability + API keys)
+      const filteredModels = this.client.getFilteredModels(analysis.relevantMetrics, analysis.priorityMetrics, analysis.capability, 10);
+      console.log(`[ChatService] Retrieved ${filteredModels.length} filtered models based on LLM analysis (capability: ${analysis.capability})`);
       
       // Phase 3: Execute with smart model selection and circuit breaker logic
       const response = await this.executeWithCircuitBreaker(filteredModels, userRequest, analysis);
@@ -292,10 +300,14 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
   }
 
   /**
-   * Select cheapest models for the relevant metrics
+   * Select cheapest models among those with LLM-selected metrics
    */
   private selectCheapestModels(models: (LLMModelData | MediaModelData)[], analysis: AnalysisResult): (LLMModelData | MediaModelData)[] {
-    // Models are already filtered by relevant metrics, just sort by price
+    // Among models with LLM-selected metrics, pick the cheapest
+    const relevantMetrics = analysis.relevantMetrics;
+    
+    console.log(`[ChatService] Selecting cheapest models among those with metrics: ${relevantMetrics.join(', ')}`);
+    
     return models
       .filter(model => 'price' in model && model.price > 0) // Only models with price info
       .sort((a, b) => (a as any).price - (b as any).price) // Sort by price (lowest first)
@@ -303,39 +315,52 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
   }
 
   /**
-   * Select most accurate models based on evaluation scores
+   * Select most accurate models based on LLM-selected metrics
    */
   private selectMostAccurateModels(models: (LLMModelData | MediaModelData)[], analysis: AnalysisResult): (LLMModelData | MediaModelData)[] {
-    // Models are already filtered by relevant metrics, just sort by accuracy
+    // Use the LLM-selected metrics to determine accuracy
     const relevantMetrics = analysis.relevantMetrics;
+    
+    console.log(`[ChatService] Selecting most accurate models using metrics: ${relevantMetrics.join(', ')}`);
     
     return models
       .sort((a, b) => {
-        // Calculate average score across relevant metrics
+        // Calculate score based on the specific metrics the LLM said are relevant
         const aScore = relevantMetrics.reduce((sum, metric) => 
           sum + (a.evaluations.get(metric) || 0), 0) / relevantMetrics.length;
         const bScore = relevantMetrics.reduce((sum, metric) => 
           sum + (b.evaluations.get(metric) || 0), 0) / relevantMetrics.length;
+        
+        console.log(`[ChatService] Model ${a.provider_name}:${a.name} score: ${aScore.toFixed(2)}, Model ${b.provider_name}:${b.name} score: ${bScore.toFixed(2)}`);
+        
         return bScore - aScore; // Sort by accuracy (highest first)
       })
       .slice(0, 5); // Return top 5 most accurate
   }
 
   /**
-   * Select balanced models (best accuracy/price ratio)
+   * Select balanced models (best accuracy/price ratio) using LLM-selected metrics
    */
-  private selectBalancedModels(models: (LLMModelData | MediaModelData)[]): (LLMModelData | MediaModelData)[] {
+  private selectBalancedModels(models: (LLMModelData | MediaModelData)[], analysis: AnalysisResult): (LLMModelData | MediaModelData)[] {
+    const relevantMetrics = analysis.relevantMetrics;
+    
+    console.log(`[ChatService] Selecting balanced models using metrics: ${relevantMetrics.join(', ')}`);
+    
     return models
       .filter(model => 'price' in model && model.price > 0) // Only models with price info
       .map(model => {
-        // Calculate value score = average evaluation / price
-        const avgEvaluation = Array.from(model.evaluations.values()).reduce((sum, val) => sum + val, 0) / model.evaluations.size;
-        const valueScore = avgEvaluation / (model as any).price;
-        return { model, valueScore };
+        // Calculate value score using only LLM-selected metrics
+        const relevantScore = relevantMetrics.reduce((sum, metric) => 
+          sum + (model.evaluations.get(metric) || 0), 0) / relevantMetrics.length;
+        const valueScore = relevantScore / (model as any).price;
+        return { model, valueScore, relevantScore };
       })
       .sort((a, b) => b.valueScore - a.valueScore) // Sort by highest value score
       .slice(0, 5) // Return top 5
-      .map(item => item.model);
+      .map(item => {
+        console.log(`[ChatService] Balanced model ${item.model.provider_name}:${item.model.name} - Score: ${item.relevantScore.toFixed(2)}, Price: ${(item.model as any).price}, Value: ${item.valueScore.toFixed(2)}`);
+        return item.model;
+      });
   }
 
   /**
@@ -348,13 +373,13 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
       
       if (!provider || !apiKey) {
         console.warn('[ChatService] No analysis provider configured, falling back to automatic balance calculation');
-        return this.selectBalancedModels(models);
+        return this.selectBalancedModels(models, analysis);
       }
       
       // Ensure provider name is valid for createProvider
       if (!this.isValidProviderName(provider)) {
         console.warn(`[ChatService] Invalid provider name for analysis: ${provider}, falling back to automatic balance calculation`);
-        return this.selectBalancedModels(models);
+        return this.selectBalancedModels(models, analysis);
       }
       
       const analysisProvider = createProvider(provider as any, apiKey);
@@ -365,14 +390,14 @@ Focus on selecting 2-4 most relevant metrics that would best evaluate model perf
       
       if (!response.success || !response.data) {
         console.warn('[ChatService] LLM ranking failed, falling back to automatic balance calculation');
-        return this.selectBalancedModels(models);
+        return this.selectBalancedModels(models, analysis);
       }
       
-      return this.parseModelRankingResponse(response.data, models);
+      return this.parseModelRankingResponse(response.data, models, analysis);
     } catch (error) {
       console.error('[ChatService] Error in LLM-assisted model selection:', error);
       // Fallback to automatic balance calculation
-      return this.selectBalancedModels(models);
+      return this.selectBalancedModels(models, analysis);
     }
   }
 
@@ -409,7 +434,7 @@ Respond with ONLY a JSON array of model names in order of preference:
   /**
    * Parse LLM model ranking response
    */
-  private parseModelRankingResponse(response: string, models: (LLMModelData | MediaModelData)[]): (LLMModelData | MediaModelData)[] {
+  private parseModelRankingResponse(response: string, models: (LLMModelData | MediaModelData)[], analysis: AnalysisResult): (LLMModelData | MediaModelData)[] {
     try {
       const rankedModelNames = JSON.parse(response);
       
@@ -436,7 +461,7 @@ Respond with ONLY a JSON array of model names in order of preference:
     } catch (error) {
       console.error('[ChatService] Error parsing model ranking response:', error);
       // Fallback to automatic balance calculation
-      return this.selectBalancedModels(models);
+      return this.selectBalancedModels(models, analysis);
     }
   }
 

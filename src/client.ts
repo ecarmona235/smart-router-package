@@ -26,6 +26,7 @@ interface ProviderData {
   has_api_key: boolean;
   models: Map<string, ModelData>;
   last_used: Date | null; // Track when this provider was last used (for rotation)
+  capabilities: string[]; // Track what capabilities this provider supports
 }
 
 // Base model interface
@@ -282,28 +283,30 @@ interface MediaProviderData extends ProviderData {
     
 
     /**
-     * Get filtered models based on API keys and relevant metrics
+     * Get filtered models based on API keys, relevant metrics, and capability
      * @param relevantMetrics - Array of relevant evaluation metrics for filtering
      * @param priorityMetrics - Array of priority evaluation metrics (not used in filtering)
+     * @param capability - Required capability (text, image, audio, video, embedding)
      * @param count - Maximum number of models to return (default: 10)
      * @returns Array of filtered models ready for strategy-based selection
      */
-    getFilteredModels(relevantMetrics: string[], priorityMetrics: string[], count: number = 10): (LLMModelData | MediaModelData)[] {
+    getFilteredModels(relevantMetrics: string[], priorityMetrics: string[], capability: string, count: number = 10): (LLMModelData | MediaModelData)[] {
       try {
-        console.log(`[Model Selection] Starting model filtering with ${relevantMetrics.length} relevant metrics and ${priorityMetrics.length} priority metrics`);
+        console.log(`[Model Selection] Starting model filtering with ${relevantMetrics.length} relevant metrics, ${priorityMetrics.length} priority metrics, and capability: ${capability}`);
         console.log(`[Model Selection] Relevant metrics: ${relevantMetrics.join(', ')}`);
         console.log(`[Model Selection] Priority metrics: ${priorityMetrics.join(', ')}`);
+        console.log(`[Model Selection] Required capability: ${capability}`);
         
         // Step 1: API Key Validation - only models from configured providers
         const apiKeyValidModels = this.getModelsWithAPIKeys();
         console.log(`[Model Selection] Found ${apiKeyValidModels.length} models with valid API keys`);
         
-        // Step 2: Metric-Based Filtering (models with relevant metrics)
-        const metricFilteredModels = this.filterModelsByMetrics(apiKeyValidModels, relevantMetrics, priorityMetrics);
-        console.log(`[Model Selection] After metric filtering: ${metricFilteredModels.length} models with relevant metrics`);
+        // Step 2: Metric and Capability-Based Filtering
+        const filteredModels = this.filterModelsByMetricsAndCapability(apiKeyValidModels, relevantMetrics, capability);
+        console.log(`[Model Selection] After metric and capability filtering: ${filteredModels.length} models with relevant metrics and ${capability} capability`);
         
         // Step 3: Return filtered models (selection strategy will handle ranking)
-        const topModels = metricFilteredModels.slice(0, count);
+        const topModels = filteredModels.slice(0, count);
         console.log(`[Model Selection] Returning ${topModels.length} filtered models for strategy-based selection`);
         
         return topModels;
@@ -366,17 +369,39 @@ interface MediaProviderData extends ProviderData {
     }
 
         /**
-     * Filter models based on relevant metrics only
+     * Filter models based on relevant metrics and capability
      * Selection strategy will determine how to rank/order these models
      */
-    private filterModelsByMetrics(
+    private filterModelsByMetricsAndCapability(
       models: (LLMModelData | MediaModelData)[], 
       relevantMetrics: string[], 
-      priorityMetrics: string[] // Not used here - strategy determines ordering
+      capability: string
     ): (LLMModelData | MediaModelData)[] {
-      // Filter models to only include those with relevant metrics
-      return models.filter(model => 
-        relevantMetrics.some(metric => model.evaluations.has(metric))
-      );
+      return models.filter(model => {
+        // Must have relevant metrics
+        const hasRelevantMetrics = relevantMetrics.some(metric => 
+          model.evaluations.has(metric)
+        );
+        
+        // Must support the required capability
+        const hasCapability = this.modelSupportsCapability(model, capability);
+        
+        return hasRelevantMetrics && hasCapability;
+      });
     }
+
+    /**
+     * Check if a model supports the required capability
+     */
+    private modelSupportsCapability(model: LLMModelData | MediaModelData, capability: string): boolean {
+      // Get provider capabilities from stored data
+      const llmProvider = this.llmProviders.get(model.provider_name);
+      const mediaProvider = this.mediaProviders.get(model.provider_name);
+      
+      const provider = llmProvider || mediaProvider;
+      if (!provider) return false;
+      
+      return provider.capabilities.includes(capability);
+    }
+
 }
