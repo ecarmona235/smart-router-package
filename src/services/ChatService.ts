@@ -1,9 +1,8 @@
 import type { RouterClient } from '../client.js';
 import { createProvider } from '../providers/factory.js';
 
-// Import model types from client
-type LLMModelData = any; // Will be properly typed when we import from client
-type MediaModelData = any; // Will be properly typed when we import from client
+// Import the actual model types from client
+import type { LLMModelData, MediaModelData } from '../client.js';
 
 // Analysis result interface
 export interface AnalysisResult {
@@ -38,8 +37,8 @@ const EVALUATION_METRICS = [
 export class ChatService {
   private analysisProvider: any; // OpenAI provider for analysis
   private client: RouterClient;
-  
-  // Circuit breaker tracking
+
+  // Circuit breaker tracking - maps model keys to health data
   private modelHealth: Map<string, {
     failures: number;
     lastFailure: number;
@@ -47,16 +46,6 @@ export class ChatService {
     disabledReason: 'TEMPORARY' | 'PERMANENT' | null;
   }> = new Map();
 
-  /**
-   * Create a new ChatService instance
-   * @param client - The RouterClient instance
-   * @param analysisConfig - Optional configuration for the analysis provider
-   *   - provider: Provider name (e.g., 'openai', 'anthropic', 'cohere')
-   *   - model: Model name to use for analysis (e.g., 'gpt-3.5-turbo', 'claude-3-haiku')
-   * 
-   * If no analysisConfig is provided, defaults to OpenAI GPT-3.5-turbo
-   * Uses API keys configured in the client's provider configuration
-   */
   constructor(
     client: RouterClient, 
     analysisConfig?: {
@@ -136,9 +125,7 @@ export class ChatService {
       const filteredModels = this.client.getFilteredModels(analysis.relevantMetrics, analysis.priorityMetrics, 10);
       console.log(`[ChatService] Retrieved ${filteredModels.length} filtered models for execution`);
       
-      // TODO: Phase 3: Execute with circuit breaker logic (LLM will rank models during execution)
-      
-      // Phase 3: Execute with circuit breaker logic
+      // Phase 3: Execute with circuit breaker logic (LLM will rank models during execution)
       const response = await this.executeWithCircuitBreaker(filteredModels, userRequest);
       return response;
     } catch (error) {
@@ -164,9 +151,8 @@ export class ChatService {
       return await this.executeModelsInOrder(rankedModels, userRequest);
     } catch (error) {
       console.error('[ChatService] Error in circuit breaker execution:', error);
-      // Fallback: try models in original order
-      console.log('[ChatService] Falling back to original model order');
-      return await this.executeModelsInOrder(models, userRequest);
+      // Fail fast - if ranking/execution fails, there's a fundamental issue
+      throw new Error(`Circuit breaker execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -256,16 +242,16 @@ Ranked Models (numbers only):`;
       const usedIndices = new Set<number>();
 
       for (const index of validIndices) {
-        if (!usedIndices.has(index)) {
-          rankedModels.push(originalModels[index]);
+        if (!usedIndices.has(index) && originalModels[index]) {
+          rankedModels.push(originalModels[index]!);
           usedIndices.add(index);
         }
       }
 
       // Add any remaining models that weren't ranked
       for (let i = 0; i < originalModels.length; i++) {
-        if (!usedIndices.has(i)) {
-          rankedModels.push(originalModels[i]);
+        if (!usedIndices.has(i) && originalModels[i]) {
+          rankedModels.push(originalModels[i]!);
         }
       }
 
@@ -407,6 +393,8 @@ Choose 3-5 relevant metrics and 2-3 priority metrics. Be specific and thoughtful
   private async executeModelsInOrder(models: (LLMModelData | MediaModelData)[], userRequest: string): Promise<ChatResponse> {
     for (let i = 0; i < models.length; i++) {
       const model = models[i];
+      if (!model) continue; // Skip undefined models
+      
       const modelType = 'price_per_1M_input_tokens' in model ? 'LLM' : 'Media';
       
       try {
@@ -418,8 +406,8 @@ Choose 3-5 relevant metrics and 2-3 priority metrics. Be specific and thoughtful
           continue; // Skip to next model
         }
         
-        // Execute LLM model
-        const response = await this.executeLLMModel(model, userRequest);
+        // Execute LLM model (we know it's LLM at this point)
+        const response = await this.executeLLMModel(model as LLMModelData, userRequest);
         if (response.success) {
           console.log(`[ChatService] Successfully executed ${model.provider_name}:${model.name}`);
           // Reset failure count on success
@@ -491,27 +479,17 @@ Choose 3-5 relevant metrics and 2-3 priority metrics. Be specific and thoughtful
     currentHealth.failures++;
     currentHealth.lastFailure = Date.now();
 
-    // Check if model should be disabled permanently
-    if (currentHealth.failures >= 3) {
+    // Classify error and set disable reason
+    const errorType = this.classifyError(error);
+    
+    if (errorType === 'PERMANENT') {
       currentHealth.disabledReason = 'PERMANENT';
-      console.log(`[ChatService] Model ${modelKey} disabled permanently due to 3 consecutive failures.`);
-    }
-    // Check if model should be disabled temporarily (e.g., after 15 minutes)
-    else if (currentHealth.failures >= 2) { // 2 failures means it's on the edge of temporary
-      const lastFailureTime = currentHealth.lastFailure;
-      const now = Date.now();
-      const timeSinceLastFailure = now - lastFailureTime;
-
-      if (timeSinceLastFailure < 15 * 60 * 1000) { // 15 minutes
-        currentHealth.disabledReason = 'TEMPORARY';
-        currentHealth.disabledUntil = now + (15 * 60 * 1000 - timeSinceLastFailure); // Calculate remaining time
-        console.log(`[ChatService] Model ${modelKey} disabled temporarily for ${15 * 60 * 1000 - timeSinceLastFailure}ms due to 2 consecutive failures.`);
-      } else {
-        // If it's been more than 15 minutes, reset failures
-        currentHealth.failures = 0;
-        currentHealth.lastFailure = Date.now();
-        console.log(`[ChatService] Model ${modelKey} recovered from temporary failure.`);
-      }
+      console.log(`[ChatService] Model ${modelKey} disabled permanently due to ${currentHealth.failures} consecutive failures.`);
+    } else if (currentHealth.failures >= 3) {
+      // Temporary disable for 15 minutes after 3 failures
+      currentHealth.disabledReason = 'TEMPORARY';
+      currentHealth.disabledUntil = Date.now() + (15 * 60 * 1000); // 15 minutes
+      console.log(`[ChatService] Model ${modelKey} disabled temporarily for 15 minutes due to ${currentHealth.failures} consecutive failures.`);
     }
 
     this.modelHealth.set(modelKey, currentHealth);
@@ -529,15 +507,8 @@ Choose 3-5 relevant metrics and 2-3 priority metrics. Be specific and thoughtful
       currentHealth.lastFailure = Date.now();
       currentHealth.disabledReason = null;
       delete currentHealth.disabledUntil;
-      console.log(`[ChatService] Model ${modelKey} failures reset.`);
+      console.log(`[ChatService] Model ${modelKey} failures reset to zero.`);
     }
-  }
-
-  /**
-   * Get current circuit breaker status for debugging
-   */
-  getCircuitBreakerStatus(): Map<string, any> {
-    return new Map(this.modelHealth);
   }
 
   /**
@@ -555,13 +526,43 @@ Choose 3-5 relevant metrics and 2-3 priority metrics. Be specific and thoughtful
       return true;
     }
 
-    if (currentHealth.disabledReason === 'TEMPORARY') {
+    if (currentHealth.disabledReason === 'TEMPORARY' && currentHealth.disabledUntil) {
       const now = Date.now();
-      if (currentHealth.disabledUntil && now < currentHealth.disabledUntil) {
+      if (now < currentHealth.disabledUntil) {
         return true;
       }
     }
 
     return false;
+  }
+
+  /**
+   * Classify error as permanent or temporary
+   */
+  private classifyError(error: any): 'TEMPORARY' | 'PERMANENT' {
+    const errorMessage = error?.message?.toLowerCase() || '';
+    const statusCode = error?.status || error?.statusCode;
+
+    // Permanent errors (API key issues)
+    if (statusCode >= 400 && statusCode <= 403) return 'PERMANENT';
+    if (errorMessage.includes('permission_denied') || 
+        errorMessage.includes('access_denied') ||
+        errorMessage.includes('insufficient_quota') ||
+        errorMessage.includes('authentication_error') ||
+        errorMessage.includes('auth_error') ||
+        errorMessage.includes('model_not_found') ||
+        errorMessage.includes('billing_required')) {
+      return 'PERMANENT';
+    }
+
+    // Temporary errors (service issues)
+    return 'TEMPORARY';
+  }
+
+  /**
+   * Get current circuit breaker status for debugging
+   */
+  getCircuitBreakerStatus(): Map<string, any> {
+    return new Map(this.modelHealth);
   }
 }

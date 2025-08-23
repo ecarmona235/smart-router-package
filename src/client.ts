@@ -1,4 +1,3 @@
-import type { BaseProvider, ProviderResult, ProviderError, ProviderName, PROVIDER_CONFIGS } from './providers/base.js';
 import { ChatService } from './services/ChatService.js';
 
 export type RouterClientOptions = {
@@ -40,17 +39,22 @@ interface ModelData {
 }
 
 // LLM-specific model data extending base ModelData
-interface LLMModelData extends ModelData {
+export interface LLMModelData extends ModelData {
   evaluations: Map<string, number>; // All your LLM metrics
   price_per_1M_input_tokens: number;
   price_per_1M_output_tokens: number;
   median_output_tokens_per_second: number;
   median_time_to_first_token: number;
-  last_used: Date | null; // Can be null initially
+  last_used: Date | null;
+  // Model health tracking
+  failures: number;
+  lastFailure: number;
+  disabledUntil?: number | undefined;
+  disabledReason: 'TEMPORARY' | 'PERMANENT' | null;
 }
 
 // Media-specific model data extending base ModelData
-interface MediaModelData extends ModelData {
+export interface MediaModelData extends ModelData {
   evaluations: Map<string, number>; // All your media metrics
   elo: number;
   rank: number;
@@ -63,6 +67,11 @@ interface MediaModelData extends ModelData {
     ci95?: string;
   }[];
   last_used: Date | null; // Can be null initially
+  // Model health tracking
+  failures: number;
+  lastFailure: number;
+  disabledUntil?: number | undefined;
+  disabledReason: 'TEMPORARY' | 'PERMANENT' | null;
 }
 
 // Main data structures
@@ -295,7 +304,11 @@ interface RouterData {
                 price_per_1M_input_tokens: 0,
                 price_per_1M_output_tokens: 0,
                 median_output_tokens_per_second: 0,
-                median_time_to_first_token: 0
+                median_time_to_first_token: 0,
+                failures: 0,
+                lastFailure: 0,
+                disabledUntil: undefined,
+                disabledReason: null
             });
         }
         return provider.models.get(modelName)!;
@@ -315,7 +328,11 @@ interface RouterData {
                 rank: 0,
                 ci95: '',
                 model_type: '',
-                categories: []
+                categories: [],
+                failures: 0,
+                lastFailure: 0,
+                disabledUntil: undefined,
+                disabledReason: null
             });
         }
         return provider.models.get(modelName)!;
