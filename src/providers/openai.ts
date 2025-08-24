@@ -190,49 +190,49 @@ export class OpenAIProvider implements BaseProvider {
     }
   }
 
-  async speechToTextStream(
-    model: string,
-    audioPath: string
-  ): Promise<ProviderResult<ReadableStream>> {
-    try {
-      const audioFile = await this.pathToFile(audioPath);
-      const response = await this.client.audio.transcriptions.create({
-        model: model,
-        file: audioFile,
-        response_format: 'verbose_json',
-        timestamp_granularities: ['word']
-      });
+  // async speechToTextStream(
+  //   model: string,
+  //   audioPath: string
+  // ): Promise<ProviderResult<ReadableStream>> {
+  //   try {
+  //     const audioFile = await this.pathToFile(audioPath);
+  //     const response = await this.client.audio.transcriptions.create({
+  //       model: model,
+  //       file: audioFile,
+  //       response_format: 'verbose_json',
+  //       timestamp_granularities: ['word']
+  //     });
 
-      // For streaming transcription, we need to handle the response differently
-      // OpenAI's transcription API doesn't support true streaming yet
-      // This returns the full transcription with timestamps
-      if (response.text) {
-        // Convert to a readable stream for consistency
-        const stream = new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode(response.text));
-            controller.close();
-          }
-        });
+  //     // For streaming transcription, we need to handle the response differently
+  //     // OpenAI's transcription API doesn't support true streaming yet
+  //     // This returns the full transcription with timestamps
+  //     if (response.text) {
+  //       // Convert to a readable stream for consistency
+  //       const stream = new ReadableStream({
+  //         start(controller) {
+  //           controller.enqueue(new TextEncoder().encode(response.text));
+  //           controller.close();
+  //         }
+  //       });
 
-        return {
-          success: true,
-          data: stream,
-          provider: this.providerName,
-          model: model,
-        };
-      } else {
-        throw new Error('No transcription received');
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        provider: this.providerName,
-        model: model,
-      };
-    }
-  }
+  //       return {
+  //         success: true,
+  //         data: stream,
+  //         provider: this.providerName,
+  //         model: model,
+  //       };
+  //     } else {
+  //       throw new Error('No transcription received');
+  //     }
+  //   } catch (error) {
+  //     return {
+  //       success: false,
+  //       error: error instanceof Error ? error.message : 'Unknown error',
+  //       provider: this.providerName,
+  //       model: model,
+  //     };
+  //   }
+  // }
 
     
   async textToSpeech(
@@ -282,38 +282,38 @@ export class OpenAIProvider implements BaseProvider {
     }
   }
 
-  async textToSpeechStream(
-    model: string,
-    text: string,
-    options?: { voice?: string; speed?: number }
-  ): Promise<ProviderResult<ReadableStream>> {
-    try {
-      const response = await this.client.audio.speech.create({
-        model: model,
-        input: text,
-        voice: options?.voice || 'alloy',
-        speed: options?.speed || 1.0,
-      });
+  // async textToSpeechStream(
+  //   model: string,
+  //   text: string,
+  //   options?: { voice?: string; speed?: number }
+  // ): Promise<ProviderResult<ReadableStream>> {
+  //   try {
+  //     const response = await this.client.audio.speech.create({
+  //       model: model,
+  //       input: text,
+  //       voice: options?.voice || 'alloy',
+  //       speed: options?.speed || 1.0,
+  //     });
 
-      if (response.body) {
-        return {
-          success: true,
-          data: response.body, // Return the actual stream
-          provider: this.providerName,
-          model: model,
-        };
-      } else {
-        throw new Error('No audio stream received');
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        provider: this.providerName,
-        model: model,
-      };
-    }
-  }
+  //     if (response.body) {
+  //       return {
+  //         success: true,
+  //         data: response.body, // Return the actual stream
+  //         provider: this.providerName,
+  //         model: model,
+  //       };
+  //     } else {
+  //       throw new Error('No audio stream received');
+  //     }
+  //   } catch (error) {
+  //     return {
+  //       success: false,
+  //       error: error instanceof Error ? error.message : 'Unknown error',
+  //       provider: this.providerName,
+  //       model: model,
+  //     };
+  //   }
+  // }
 
 
   async embedText(
